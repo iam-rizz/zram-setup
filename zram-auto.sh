@@ -25,7 +25,7 @@
 # =============================================================================
 set -euo pipefail
 
-VERSION=1.0.0
+VERSION=1.0.1
 NAME=zram-auto
 RAW_URL=https://raw.githubusercontent.com/iam-rizz/zram-setup/main/zram-auto.sh
 BIN=/usr/local/sbin/$NAME
@@ -180,6 +180,7 @@ SYSCTL_KEYS=(vm.swappiness vm.page-cluster vm.watermark_boost_factor vm.watermar
 log() { echo "zram-auto: $*"; }
 die() { echo "zram-auto: ERROR: $*" >&2; exit 1; }
 
+cores_str() { local n; n=$(nproc); if (( n == 1 )); then echo "1 core"; else echo "$n cores"; fi; }
 ram_mib() { awk '/^MemTotal:/ {printf "%d", $2 / 1024}' /proc/meminfo; }
 max() { if (( $1 > $2 )); then echo "$1"; else echo "$2"; fi; }
 min() { if (( $1 < $2 )); then echo "$1"; else echo "$2"; fi; }
@@ -320,7 +321,7 @@ do_start() {
   echo "$dev" > "$RUN/device"
 
   apply_sysctl
-  log "active: /dev/$dev size=$size algo=$algo prio=$ZRAM_PRIORITY (RAM $(ram_mib) MiB, $cores cores, kernel $(uname -r))"
+  log "active: /dev/$dev size=$size algo=$algo prio=$ZRAM_PRIORITY (RAM $(ram_mib) MiB, $(cores_str), kernel $(uname -r))"
 }
 
 do_stop() {
@@ -342,7 +343,7 @@ do_stop() {
 
 do_status() {
   local dev k orig compr used
-  printf 'RAM    : %s MiB\nCPU    : %s cores\nKernel : %s\n\n' "$(ram_mib)" "$(nproc)" "$(uname -r)"
+  printf 'RAM    : %s MiB\nCPU    : %s\nKernel : %s\n\n' "$(ram_mib)" "$(cores_str)" "$(uname -r)"
   echo "-- Active swap --"
   swapon --show 2>/dev/null || cat /proc/swaps
   echo
@@ -356,8 +357,9 @@ do_status() {
         printf "Original data   : %.1f MiB\n", o / 1048576
         printf "Compressed      : %.1f MiB\n", c / 1048576
         printf "RAM used        : %.1f MiB\n", u / 1048576
-        if (u > 0) printf "Effective ratio : %.2fx\n", o / u
-        else       print  "Effective ratio : - (nothing swapped yet)"
+        # below 1 MiB the allocator overhead dominates, so the ratio is meaningless
+        if (o >= 1048576 && u > 0) printf "Effective ratio : %.2fx\n", o / u
+        else                       print  "Effective ratio : - (not enough data swapped yet)"
       }'
     fi
   else
